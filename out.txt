@@ -1,0 +1,59 @@
+gcc -Wall -g -o build/main.o -c source/main.c -Iheaders
+source/main.c: In function ‘main’:
+source/main.c:62:37: error: too few arguments to function ‘up’
+  if(semop(critical, (struct sembuf*)up(), 1) < 0)
+                                     ^~
+source/main.c:45:15: note: declared here
+ struct sembuf up(int sem_id);
+               ^~
+source/main.c: In function ‘think’:
+source/main.c:127:37: error: too few arguments to function ‘down’
+  if(semop(critical, (struct sembuf*)down(), 1) < 0)
+                                     ^~~~
+source/main.c:44:15: note: declared here
+ struct sembuf down(int sem_id);
+               ^~~~
+source/main.c:132:37: error: too few arguments to function ‘up’
+  if(semop(critical, (struct sembuf*)up(), 1) < 0)
+                                     ^~
+source/main.c:45:15: note: declared here
+ struct sembuf up(int sem_id);
+               ^~
+source/main.c: In function ‘hungry’:
+source/main.c:142:37: error: too few arguments to function ‘down’
+  if(semop(critical, (struct sembuf*)down(), 1) < 0)
+                                     ^~~~
+source/main.c:44:15: note: declared here
+ struct sembuf down(int sem_id);
+               ^~~~
+source/main.c:147:37: error: too few arguments to function ‘up’
+  if(semop(critical, (struct sembuf*)up(), 1) < 0)
+                                     ^~
+source/main.c:45:15: note: declared here
+ struct sembuf up(int sem_id);
+               ^~
+source/main.c: In function ‘eat’:
+source/main.c:156:37: error: too few arguments to function ‘down’
+  if(semop(critical, (struct sembuf*)down(), 1) < 0)
+                                     ^~~~
+source/main.c:44:15: note: declared here
+ struct sembuf down(int sem_id);
+               ^~~~
+source/main.c:162:37: error: too few arguments to function ‘up’
+  if(semop(critical, (struct sembuf*)up(), 1) < 0)
+                                     ^~
+source/main.c:45:15: note: declared here
+ struct sembuf up(int sem_id);
+               ^~
+source/main.c: At top level:
+source/main.c:179:30: error: expected ‘;’, ‘,’ or ‘)’ before ‘=’ token
+ struct sembuf down(int sem_id=0)
+                              ^
+source/main.c:184:28: error: expected ‘;’, ‘,’ or ‘)’ before ‘=’ token
+ struct sembuf up(int sem_id=0);
+                            ^
+source/main.c:185:1: error: expected identifier or ‘(’ before ‘{’ token
+ {
+ ^
+makefile:47: recipe for target 'build/main.o' failed
+make: *** [build/main.o] Error 1
