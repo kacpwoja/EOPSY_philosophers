@@ -4,6 +4,8 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/sem.h>
+#include <stdlib.h>
+#include <sys/shm.h>
 
 // Number of Philosophers
 #define N 5
@@ -15,7 +17,9 @@
 
 // Semaphore Keys
 #define FORKKEY 0x1111
-#define CRITKEY 0x1110
+#define CRITKEY 0x1234
+// Memory Key
+#define SHMKEY 0x1998
 
 // Defines for readibilty
 #define LEFT (i-1+N)%N
@@ -28,9 +32,11 @@ void grab_forks(int left_fork_id);
 void put_away_forks(int left_fork_id);
 void test(int left_fork_id);
 
-// Shared variables (pipe IDs)
-int times_eaten[N][2];
-int philo_states[N][2];
+// Shared memory
+struct shared_memory {
+	int times_eaten[N];
+	int philo_states[N];
+};
 
 // Semaphore operations
 struct sembuf down = {0, -1, SEM_UNDO};
@@ -38,33 +44,31 @@ struct sembuf up = {0, +1, SEM_UNDO};
 
 int main(int argc, char** argv)
 {
-	// Getting pipe IDs
-	int return_status;
+	// Get shared memory
+	int shmid = shmget(SHMKEY, sizeof(struct shared_memory), 0660 | IPC_CREAT);
+	if(shmid < 0)
+	{
+		perror("SHMGET error\n");
+		exit(1);
+	}
+	// Attach
+	struct shared_memory* shared;
+	shared = shmat(shmid, NULL, 0);
+	if(shared == (void*) -1)
+	{
+		perror("SHMAT error\n");
+		exit(1);
+	}
+	// Initialize to 0 and THINKING
 	for(int i=0; i<N; i++)
 	{
-		return_status = pipe(times_eaten[i]);
-		if(return_status == -1)
-		{
-			fprintf(stderr, "Failed to create pipe %d,eat. Exiting.\n", i);
-			return 1;
-		}
-		// Initiate to 0
-		write(times_eaten[i][1], 0, sizeof(int));
-
-		return_status = pipe(philo_states[N]);
-		if(return_status == -1)
-		{
-			fprintf(stderr, "Failed to create pipe %d,state. Exiting.\n", i);
-			return 1;
-		}
-		// Initiate to THINKING (0)
-		write(philo_states[i][1], (int*)THINKING, sizeof(int));
+		shared->times_eaten[i] = 0;
+		shared->philo_states[i] = THINKING;
 	}
-	
+
 	// semun definition
 	union semun {
 		int val;
-		struct semid_ds *buf;
 		ushort *array;
 	} arg;
 
@@ -73,24 +77,24 @@ int main(int argc, char** argv)
 	int state_sem;
 
 	// Creating semaphores
-	forks_sem = semget(FORKKEY, N, 0640 | IPC_CREAT);
+	forks_sem = semget(FORKKEY, N, 0660 | IPC_CREAT);
 	if(forks_sem < 0)
 	{
-		fprintf(stderr, "Failed to create semaphore with key %d. Exiting.\n", FORKKEY);
-		return 1;
+		perror("SEMGET error");
+		exit(1);
 	}
-	state_sem = semget(CRITKEY, 1, 0640 | IPC_CREAT);
+	state_sem = semget(CRITKEY, 1, 0660 | IPC_CREAT);
 	if(state_sem < 0)
 	{
-		fprintf(stderr, "Failed to create semaphore with key %d. Exiting.\n", FORKKEY);
-		return 1;
+		perror("SEMGET error");
+		exit(1);
 	}
 	// Semaphore init
 	arg.val = 1;
 	if(semctl(state_sem, 0, SETVAL, arg)  < 0)
 	{
-		fprintf(stderr, "SEMCTL ERROR (state semaphore). Exiting.");
-		return 1;
+		perror("SEMCTL ERROR (state semaphore). Exiting.");
+		exit(1);
 	}
 	ushort zeros[N];
 	for(int i=0; i<N; i++)
@@ -98,8 +102,8 @@ int main(int argc, char** argv)
 	arg.array = zeros;
 	if(semctl(forks_sem, N, SETALL, arg) < 0)
 	{
-		fprintf(stderr, "SEMCTL ERROR (forks semaphores). Exiting.");
-		return 1;
+		perror("SEMCTL ERROR (forks semaphores). Exiting.");
+		exit(1);
 	}
 
 
@@ -115,12 +119,12 @@ int main(int argc, char** argv)
 		// Fork failed
 		if(pid < 0)
 		{
-			fprintf(stderr, "Fork failed. Terminating processes and exiting.\n");
+			perror("Fork failed. Terminating processes and exiting.\n");
 			for( int j=0; j<philo_count; j++)
 			{
 				kill(philo_pids[j], SIGTERM);
 			}
-			return 1;
+			exit(1);
 		}
 	
 		// Parent process
@@ -159,21 +163,37 @@ int main(int argc, char** argv)
 	}
 	
 	// Printing summary
+	/*
 	if(semop(state_sem, &down, 1) < 0)
 	{
-		fprintf(stderr, "SEMOP ERROR\n");
+		perror("SEMOP ERROR\n");
+		exit(1);
 	}
+	*/
 	for(int i=0; i<N; i++)
 	{
-		int eaten;
-		read(times_eaten[i][0], &eaten, sizeof(int));
-		printf("Philosopher %d ate %d times\n", i, eaten);
+		printf("Philosopher %d ate %d times\n", i, shared->times_eaten[i]);
 	}
+	/*
 	if(semop(state_sem, &up, 1) < 0)
 	{
-		fprintf(stderr, "SEMOP ERROR\n");
+		perror("SEMOP ERROR\n");
+		exit(1);
 	}
-	
+	*/
+
+	// Detach memory
+	if(shmdt(shared) < 0)
+	{
+		perror("SHMDT error\n");
+		exit(1);
+	}
+	// Remove memory
+	if(shmctl(shmid, IPC_RMID, 0) < 0)
+	{
+		perror("SHMCTL error\n");
+		exit(1);
+	}
 	
 	return 0;
 }
@@ -186,25 +206,43 @@ void grab_forks(int left_fork_id)
 	int state_sem;
 
 	// Getting semaphores
-	forks_sem = semget(FORKKEY, N, 0640);
+	forks_sem = semget(FORKKEY, N, 0660);
 	if(forks_sem < 0)
 	{
-		fprintf(stderr, "Failed to get semaphore with key %d. Exiting.\n", FORKKEY);
+		perror("SEMGET error");
+		exit(1);
 	}
-	state_sem = semget(CRITKEY, 1, 0640);
+	state_sem = semget(CRITKEY, 1, 0660);
 	if(state_sem < 0)
 	{
-		fprintf(stderr, "Failed to get semaphore with key %d. Exiting.\n", FORKKEY);
+		perror("SEMGET error");
+		exit(1);	
+	}
+	// Get shared memory
+	int shmid = shmget(SHMKEY, sizeof(struct shared_memory), 0660);
+	if(shmid < 0)
+	{
+		perror("SHMGET error\n");
+		exit(1);
+	}
+	// Attach
+	struct shared_memory* shared;
+	shared = shmat(shmid, NULL, 0);
+	if(shared == (void*) -1)
+	{
+		perror("SHMAT error\n");
+		exit(1);
 	}
 
 	// Enter critical section
 	if(semop(state_sem, &down, 1) < 0)
 	{
-		fprintf(stderr, "Semop error\n");
+		perror("Semop error\n");
+		exit(1);
 	}
 
 	// Become hungry
-	write(philo_states[i][1], (int*)HUNGRY, sizeof(int));
+	shared->philo_states[i] = HUNGRY;
 	printf("Philosopher %d is hungry and trying to pick up forks.\n", i);
 	
 	// Test for forks
@@ -213,15 +251,24 @@ void grab_forks(int left_fork_id)
 	// Leave critical section
 	if(semop(state_sem, &up, 1) < 0)
 	{
-		fprintf(stderr, "Semop error\n");
+		perror("Semop error\n");
+		exit(1);
 	}
-
 	// Take the forks
 	struct sembuf i_down = {i, -1, SEM_UNDO};
 	if(semop(forks_sem, &i_down, 1) < 0)
 	{
-		fprintf(stderr, "Semop error\n");
+		perror("Semop error\n");
+		exit(1);
 	}
+
+	// Detach memory
+	if(shmdt(shared) < 0)
+	{
+		perror("SHMDT error\n");
+		exit(1);
+	}
+	return;
 }
 void put_away_forks(int left_fork_id)
 {
@@ -231,32 +278,47 @@ void put_away_forks(int left_fork_id)
 	int state_sem;
 
 	// Creating semaphores
-	forks_sem = semget(FORKKEY, N, 0640);
+	forks_sem = semget(FORKKEY, N, 0660);
 	if(forks_sem < 0)
 	{
-		fprintf(stderr, "Failed to get semaphore with key %d. Exiting.\n", FORKKEY);
+		perror("SEMGET error");
+		exit(1);
 	}
-	state_sem = semget(CRITKEY, 1, 0640);
+	state_sem = semget(CRITKEY, 1, 0660);
 	if(state_sem < 0)
 	{
-		fprintf(stderr, "Failed to get semaphore with key %d. Exiting.\n", FORKKEY);
+		perror("SEMGET error");
+		exit(1);
+	}
+	// Get shared memory
+	int shmid = shmget(SHMKEY, sizeof(struct shared_memory), 0660);
+	if(shmid < 0)
+	{
+		perror("SHMGET error\n");
+		exit(1);
+	}
+	// Attach
+	struct shared_memory* shared;
+	shared = shmat(shmid, NULL, 0);
+	if(shared == (void*) -1)
+	{
+		perror("SHMAT error\n");
+		exit(1);
 	}
 
 	// Enter critical section
 	if(semop(state_sem, &down, 1) < 0)
 	{
-		fprintf(stderr, "Semop error\n");
+		perror("Semop error\n");
+		exit(1);
 	}
 
 	// Finish eating - increase count
 	printf("Philosopher %d has finished his meal. He is putting down the forks\n", i);
-	int eaten;
-	read(times_eaten[i][0], &eaten, sizeof(int));
-	++eaten;
-	write(times_eaten[i][1], &eaten, sizeof(int));
+	++shared->times_eaten[i];
 
 	// Start thinking
-	write(philo_states[i][1], (int*)THINKING, sizeof(int));
+	shared->philo_states[i] = THINKING;
 	
 	// Let neighbours eat
 	test(LEFT);
@@ -265,8 +327,17 @@ void put_away_forks(int left_fork_id)
 	// Leave critical section
 	if(semop(state_sem, &up, 1) < 0)
 	{
-		fprintf(stderr, "Semop error\n");
+		perror("Semop error\n");
+		exit(1);
 	}
+
+	// Detach memory
+	if(shmdt(shared) < 0)
+	{
+		perror("SHMDT error\n");
+		exit(1);
+	}
+	return;
 }
 
 void test(int left_fork_id)
@@ -277,36 +348,53 @@ void test(int left_fork_id)
 	int state_sem;
 
 	// Creating semaphores
-	forks_sem = semget(FORKKEY, N, 0640);
+	forks_sem = semget(FORKKEY, N, 0660);
 	if(forks_sem < 0)
 	{
-		fprintf(stderr, "Failed to get semaphore with key %d. Exiting.\n", FORKKEY);
+		perror("SEMGET error");
+		exit(1);
 	}
-	state_sem = semget(CRITKEY, 1, 0640);
+	state_sem = semget(CRITKEY, 1, 0660);
 	if(state_sem < 0)
 	{
-		fprintf(stderr, "Failed to get semaphore with key %d. Exiting.\n", FORKKEY);
+		perror("SEMGET error");
+		exit(1);
 	}
-
-	// Read states (already in critical section)
-	int i_state;
-	int l_state;
-	int r_state;
-
-	read(philo_states[i][0], &i_state, sizeof(int));
-	read(philo_states[LEFT][0], &l_state, sizeof(int));
-	read(philo_states[RIGHT][0], &r_state, sizeof(int));
-
-	// Check neighbours
-	if(i_state == HUNGRY && l_state != EATING && r_state != EATING)
+	// Get shared memory
+	int shmid = shmget(SHMKEY, sizeof(struct shared_memory), 0660);
+	if(shmid < 0)
+	{
+		perror("SHMGET error\n");
+		exit(1);
+	}
+	// Attach
+	struct shared_memory* shared;
+	shared = shmat(shmid, NULL, 0);
+	if(shared == (void*) -1)
+	{
+		perror("SHMAT error\n");
+		exit(1);
+	}
+	// Check neighbours (already in critical section)
+	if(shared->philo_states[i] == HUNGRY &&
+	   shared->philo_states[LEFT] != EATING &&
+	   shared->philo_states[RIGHT] != EATING)
 	{
 		// Begin eating and allow to take forks
-		write(philo_states[i][1], (int*)EATING, sizeof(int));
-		
+		shared->philo_states[i] = EATING;
 		struct sembuf i_up = {i, +1, SEM_UNDO};
 		if(semop(forks_sem, &i_up, 1) < 0)
 		{
-			fprintf(stderr, "Semop error\n");
+			perror("Semop error\n");
+			exit(1);
 		}
 	}
+
+	// Detach memory
+	if(shmdt(shared) < 0)
+	{
+		perror("SHMDT error\n");
+		exit(1);
+	}
+	return;
 }
