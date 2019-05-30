@@ -32,38 +32,69 @@ void eat(int i);
 void grab_forks(int left_fork_id);
 void put_away_forks(int left_fork_id);
 
-// Shared variables
-int times_eaten[N];
-int philo_states[N];
-
 // Semaphore operations
 struct sembuf down = {0, -1, SEM_UNDO};
 struct sembuf up = {0, +1, SEM_UNDO};
 
 int main(int argc, char** argv)
 {
+	// Shared variables (pipes)
+	int times_eaten[N][2];
+	int philo_states[N][2];
+	int return_status;
+	for(int i=0; i<N; i++)
+	{
+		return_status = pipe(times_eaten[i]);
+		if(return_status == -1)
+		{
+			fprintf(stderr, "Failed to create pipe %d,eat. Exiting.\n", i);
+			return 1;
+		}
+		return_states = pipe(philo_states[N][2]);
+		if(return_status == -1)
+		{
+			fprintf(stderr, "Failed to create pipe %d,state. Exiting.\n", i);
+			return 1;
+		}
+	}
+	
+	// semun definition
+	union semun {
+		int val;
+		struct semid_ds *buf;
+		ushort *array;
+	} arg;
+
 	// Semaphores
 	int forks_sem;
-	int critical;
+	int state_sem;
 
 	// Creating semaphores
-	forks_sem = semget(FORKKEY, N, 0666 | IPC_CREAT);
+	forks_sem = semget(FORKKEY, N, 0640 | IPC_CREAT);
 	if(forks_sem < 0)
 	{
 		fprintf(stderr, "Failed to create semaphore with key %d. Exiting.\n", FORKKEY);
 		return 1;
 	}
-	critical = semget(CRITKEY, 1, 0666 | IPC_CREAT);
-	if(critical < 0)
+	state_sem = semget(CRITKEY, 1, 0640 | IPC_CREAT);
+	if(state_sem < 0)
 	{
 		fprintf(stderr, "Failed to create semaphore with key %d. Exiting.\n", FORKKEY);
 		return 1;
 	}
 	//Setting semval to 1
-	if(semop(critical, &up, 1) < 0)
+	arg.val = 1;
+	if(semctl(state_sem, 0, SETVAL, arg)  < 0)
 	{
-		fprintf(stderr, "SEMOP ERROR\n");
+		fprintf(stderr, "SEMCTL ERROR (state semaphore). Exiting.");
+		return 1;
 	}
+	if(semctl(forks_sem, N, SETVAL, arg) < 0)
+	{
+		fprintf(stderr, "SEMCTL ERROR (forks semaphores). Exiting.");
+		return 1;
+	}
+
 
 	// Storing PIDs
 	pid_t philo_pids[N];
@@ -109,7 +140,7 @@ int main(int argc, char** argv)
 	}
 	
 	// Printing summary
-	if(semop(critical, &down, 1) < 0)
+	if(semop(state_sem, &down, 1) < 0)
 	{
 		fprintf(stderr, "SEMOP ERROR\n");
 	}
@@ -117,7 +148,7 @@ int main(int argc, char** argv)
 	{
 		printf("Philosopher %d ate %d times\n", i, times_eaten[i]);
 	}
-	if(semop(critical, &up, 1) < 0)
+	if(semop(state_sem, &up, 1) < 0)
 	{
 		fprintf(stderr, "SEMOP ERROR\n");
 	}
@@ -140,17 +171,17 @@ void philosopher(int i)
 
 void think(int i)
 {
-	int critical = semget(CRITKEY, 1, 0666);
-	if(critical < 0)
+	int state_sem = semget(CRITKEY, 1, 0640);
+	if(state_sem < 0)
 	{
 		fprintf(stderr, "Failed to create semaphore with key %d. Exiting.\n", FORKKEY);
 	}
-	if(semop(critical, &down, 1) < 0)
+	if(semop(state_sem, &down, 1) < 0)
 	{
 		fprintf(stderr, "SEMOP ERROR\n");
 	}
 	philo_states[i] = THINKING;
-	if(semop(critical, &up, 1) < 0)
+	if(semop(state_sem, &up, 1) < 0)
 	{
 		fprintf(stderr, "SEMOP ERROR\n");
 	}
@@ -160,17 +191,17 @@ void think(int i)
 
 void hungry(int i)
 {
-	int critical = semget(CRITKEY, 1, 0666);
-	if(critical < 0)
+	int state_sem = semget(CRITKEY, 1, 0666);
+	if(state_sem < 0)
 	{
 		fprintf(stderr, "Failed to create semaphore with key %d. Exiting.\n", FORKKEY);
 	}
-	if(semop(critical, &down, 1) < 0)
+	if(semop(state_sem, &down, 1) < 0)
 	{
 		fprintf(stderr, "SEMOP ERROR\n");
 	}
 	philo_states[i] = HUNGRY;
-	if(semop(critical, &up, 1) < 0)
+	if(semop(state_sem, &up, 1) < 0)
 	{
 		fprintf(stderr, "SEMOP ERROR\n");
 	}
@@ -179,19 +210,19 @@ void hungry(int i)
 
 void eat(int i)
 {
-	int critical = semget(CRITKEY, 1, 0666);
-	if(critical < 0)
+	int state_sem = semget(CRITKEY, 1, 0666);
+	if(state_sem < 0)
 	{
 		fprintf(stderr, "Failed to create semaphore with key %d. Exiting.\n", FORKKEY);
 	}
-	if(semop(critical, &down, 1) < 0)
+	if(semop(state_sem, &down, 1) < 0)
 	{
 		fprintf(stderr, "SEMOP ERROR\n");
 	}
 	philo_states[i] = EATING;
 	++times_eaten[i];
-	printf("DDD TIMES %d %d\n", i, times_eaten[i]);
-	if(semop(critical, &up, 1) < 0)
+	// printf("DDD TIMES %d %d\n", i, times_eaten[i]);
+	if(semop(state_sem, &up, 1) < 0)
 	{
 		fprintf(stderr, "SEMOP ERROR\n");
 	}
