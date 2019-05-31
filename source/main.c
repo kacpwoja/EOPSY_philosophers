@@ -19,7 +19,7 @@
 #define FORKKEY 0x1111
 #define CRITKEY 0x1234
 // Memory Key
-#define SHMKEY 0x1998
+#define SHMKEY 0x1222
 
 // Defines for readibilty
 #define LEFT (i-1+N)%N
@@ -28,6 +28,7 @@
 #define HUNGRY 1
 #define EATING 2
 
+// Synchronization functions
 void grab_forks(int left_fork_id);
 void put_away_forks(int left_fork_id);
 void test(int left_fork_id);
@@ -38,9 +39,17 @@ struct shared_memory {
 	int philo_states[N];
 };
 
+// IPC functions (for readibility)
+void sem_getids(int* forks, int* state);
+struct shared_memory* mem_attach();
+void mem_detach(struct shared_memory* mem);
+
 // Semaphore operations
 struct sembuf down = {0, -1, SEM_UNDO};
 struct sembuf up = {0, +1, SEM_UNDO};
+
+void m_down(int* mutex);
+void m_up(int* mutex);
 
 int main(int argc, char** argv)
 {
@@ -163,31 +172,15 @@ int main(int argc, char** argv)
 	}
 	
 	// Printing summary
-	/*
-	if(semop(state_sem, &down, 1) < 0)
-	{
-		perror("SEMOP ERROR\n");
-		exit(1);
-	}
-	*/
-	for(int i=0; i<N; i++)
-	{
-		printf("Philosopher %d ate %d times\n", i, shared->times_eaten[i]);
-	}
-	/*
-	if(semop(state_sem, &up, 1) < 0)
-	{
-		perror("SEMOP ERROR\n");
-		exit(1);
-	}
-	*/
+	m_down(&state_sem);
+		for(int i=0; i<N; i++)
+		{
+			printf("Philosopher %d ate %d times\n", i, shared->times_eaten[i]);
+		}
+	m_up(&state_sem);
 
 	// Detach memory
-	if(shmdt(shared) < 0)
-	{
-		perror("SHMDT error\n");
-		exit(1);
-	}
+	mem_detach(shared);
 	// Remove memory
 	if(shmctl(shmid, IPC_RMID, 0) < 0)
 	{
@@ -206,54 +199,24 @@ void grab_forks(int left_fork_id)
 	int state_sem;
 
 	// Getting semaphores
-	forks_sem = semget(FORKKEY, N, 0660);
-	if(forks_sem < 0)
-	{
-		perror("SEMGET error");
-		exit(1);
-	}
-	state_sem = semget(CRITKEY, 1, 0660);
-	if(state_sem < 0)
-	{
-		perror("SEMGET error");
-		exit(1);	
-	}
+	sem_getids(&forks_sem, &state_sem);
+
 	// Get shared memory
-	int shmid = shmget(SHMKEY, sizeof(struct shared_memory), 0660);
-	if(shmid < 0)
-	{
-		perror("SHMGET error\n");
-		exit(1);
-	}
-	// Attach
-	struct shared_memory* shared;
-	shared = shmat(shmid, NULL, 0);
-	if(shared == (void*) -1)
-	{
-		perror("SHMAT error\n");
-		exit(1);
-	}
+	struct shared_memory* shared = mem_attach();
 
 	// Enter critical section
-	if(semop(state_sem, &down, 1) < 0)
-	{
-		perror("Semop error\n");
-		exit(1);
-	}
+	m_down(&state_sem);
 
-	// Become hungry
-	shared->philo_states[i] = HUNGRY;
-	printf("Philosopher %d is hungry and trying to pick up forks.\n", i);
-	
-	// Test for forks
-	test(i);
+		// Become hungry
+		shared->philo_states[i] = HUNGRY;
+		printf("Philosopher %d is hungry and trying to pick up forks.\n", i);
+		
+		// Test for forks
+		test(i);
 
 	// Leave critical section
-	if(semop(state_sem, &up, 1) < 0)
-	{
-		perror("Semop error\n");
-		exit(1);
-	}
+	m_up(&state_sem);
+
 	// Take the forks
 	struct sembuf i_down = {i, -1, SEM_UNDO};
 	if(semop(forks_sem, &i_down, 1) < 0)
@@ -263,11 +226,7 @@ void grab_forks(int left_fork_id)
 	}
 
 	// Detach memory
-	if(shmdt(shared) < 0)
-	{
-		perror("SHMDT error\n");
-		exit(1);
-	}
+	mem_detach(shared);
 	return;
 }
 void put_away_forks(int left_fork_id)
@@ -278,65 +237,30 @@ void put_away_forks(int left_fork_id)
 	int state_sem;
 
 	// Creating semaphores
-	forks_sem = semget(FORKKEY, N, 0660);
-	if(forks_sem < 0)
-	{
-		perror("SEMGET error");
-		exit(1);
-	}
-	state_sem = semget(CRITKEY, 1, 0660);
-	if(state_sem < 0)
-	{
-		perror("SEMGET error");
-		exit(1);
-	}
-	// Get shared memory
-	int shmid = shmget(SHMKEY, sizeof(struct shared_memory), 0660);
-	if(shmid < 0)
-	{
-		perror("SHMGET error\n");
-		exit(1);
-	}
-	// Attach
-	struct shared_memory* shared;
-	shared = shmat(shmid, NULL, 0);
-	if(shared == (void*) -1)
-	{
-		perror("SHMAT error\n");
-		exit(1);
-	}
+	sem_getids(&forks_sem, &state_sem);
+	
+	// Get memory
+	struct shared_memory* shared = mem_attach();
 
 	// Enter critical section
-	if(semop(state_sem, &down, 1) < 0)
-	{
-		perror("Semop error\n");
-		exit(1);
-	}
+	m_down(&state_sem);
 
-	// Finish eating - increase count
-	printf("Philosopher %d has finished his meal. He is putting down the forks\n", i);
-	++shared->times_eaten[i];
+		// Finish eating - increase count
+		printf("Philosopher %d has finished his meal. He is putting down the forks\n", i);
+		++shared->times_eaten[i];
 
-	// Start thinking
-	shared->philo_states[i] = THINKING;
+		// Start thinking
+		shared->philo_states[i] = THINKING;
 	
-	// Let neighbours eat
-	test(LEFT);
-	test(RIGHT);
+		// Let neighbours eat
+		test(LEFT);
+		test(RIGHT);
 
 	// Leave critical section
-	if(semop(state_sem, &up, 1) < 0)
-	{
-		perror("Semop error\n");
-		exit(1);
-	}
+	m_up(&state_sem);
 
 	// Detach memory
-	if(shmdt(shared) < 0)
-	{
-		perror("SHMDT error\n");
-		exit(1);
-	}
+	mem_detach(shared);
 	return;
 }
 
@@ -348,33 +272,11 @@ void test(int left_fork_id)
 	int state_sem;
 
 	// Creating semaphores
-	forks_sem = semget(FORKKEY, N, 0660);
-	if(forks_sem < 0)
-	{
-		perror("SEMGET error");
-		exit(1);
-	}
-	state_sem = semget(CRITKEY, 1, 0660);
-	if(state_sem < 0)
-	{
-		perror("SEMGET error");
-		exit(1);
-	}
+	sem_getids(&forks_sem, &state_sem);
+
 	// Get shared memory
-	int shmid = shmget(SHMKEY, sizeof(struct shared_memory), 0660);
-	if(shmid < 0)
-	{
-		perror("SHMGET error\n");
-		exit(1);
-	}
-	// Attach
-	struct shared_memory* shared;
-	shared = shmat(shmid, NULL, 0);
-	if(shared == (void*) -1)
-	{
-		perror("SHMAT error\n");
-		exit(1);
-	}
+	struct shared_memory* shared = mem_attach();
+
 	// Check neighbours (already in critical section)
 	if(shared->philo_states[i] == HUNGRY &&
 	   shared->philo_states[LEFT] != EATING &&
@@ -391,10 +293,71 @@ void test(int left_fork_id)
 	}
 
 	// Detach memory
-	if(shmdt(shared) < 0)
+	mem_detach(shared);
+	return;
+}
+
+void sem_getids(int* forks, int* state)
+{
+	*forks = semget(FORKKEY, N, 0660);
+	if(forks < 0)
+	{
+		perror("SEMGET error");
+		exit(1);
+	}
+	*state = semget(CRITKEY, 1, 0660);
+	if(state < 0)
+	{
+		perror("SEMGET error");
+		exit(1);	
+	}
+	return;
+}
+
+struct shared_memory* mem_attach()
+{
+	// Get shared memory
+	int shmid = shmget(SHMKEY, sizeof(struct shared_memory), 0660);
+	if(shmid < 0)
+	{
+		perror("SHMGET error\n");
+		exit(1);
+	}
+	// Attach
+	struct shared_memory* mem;
+	mem = shmat(shmid, NULL, 0);
+	if(mem == (void*) -1)
+	{
+		perror("SHMAT error\n");
+		exit(1);
+	}
+	return mem;
+}
+
+void mem_detach(struct shared_memory* mem)
+{
+	if(shmdt(mem) < 0)
 	{
 		perror("SHMDT error\n");
 		exit(1);
 	}
 	return;
+}
+
+void m_down(int* mutex)
+{
+	if(semop(*mutex, &down, 1) < 0)
+	{
+		perror("Semop error\n");
+		exit(1);
+	}
+}
+
+void m_up(int* mutex)
+{
+	if(semop(*mutex, &up, 1) < 0)
+	{
+		perror("Semop error\n");
+		exit(1);
+	}
 }
